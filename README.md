@@ -1,24 +1,50 @@
-# Flinku Flutter SDK
+# flinku_sdk
+
+The official Flutter SDK for Flinku, providing deferred deep linking for iOS and Android.
+
+## Features
+
+- Deferred deep linking support for iOS and Android
+- Firebase Dynamic Links replacement path
+- Simple Flutter-first integration
 
 ## Installation
-Add to pubspec.yaml:
+
+Add `flinku_sdk` to your `pubspec.yaml`:
+
 ```yaml
 dependencies:
-  flinku_sdk:
-    path: ../flinku_sdk  # local, or git/pub.dev when published
+  flinku_sdk: ^0.1.0
 ```
 
-## Usage
-```dart
-// In main()
-await Flinku.configure(FlinkuConfig(
-  apiKey: 'fku_live_your_key',
-  debugMode: true,
-));
+Then run:
 
-// Check for deferred deep link once on launch
-final link = await Flinku.match();
-if (link.matched) {
-  // Navigate to link.deepLink
+```bash
+flutter pub get
+```
+
+## Basic Usage
+
+```dart
+import 'package:flinku_sdk/flinku_sdk.dart';
+
+Future<void> initFlinku() async {
+  await Flinku.configure(
+    FlinkuConfig(
+      apiKey: 'fku_live_your_key',
+      debugMode: true,
+    ),
+  );
+
+  final link = await Flinku.match();
+  if (link.matched) {
+    // Navigate using link.deepLink
+  }
 }
 ```
+
+## Links
+
+- Website: https://flinku.dev
+- Repository: https://github.com/flinku-dev/flutter-sdk
+- Issues: https://github.com/flinku-dev/flutter-sdk/issues
