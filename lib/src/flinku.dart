@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,84 +11,81 @@ class Flinku {
   Flinku._();
 
   static FlinkuConfig? _config;
-  static bool _initialized = false;
+  static bool _hasMatched = false;
   static SharedPreferences? _prefs;
 
   static const String _matchedKey = 'flinku_matched';
-  static const String _launchedKey = 'flinku_first_launch_done';
+  static const String _matchResultKey = 'flinku_match_result';
 
-  // Initialize the SDK — call this in main() before runApp()
-  static Future<void> configure(FlinkuConfig config) async {
-    _config = config;
-    _prefs = await SharedPreferences.getInstance();
-    _initialized = true;
+  /// Configure Flinku with your project subdomain URL.
+  ///
+  /// Call this once in main() before runApp():
+  /// ```dart
+  /// Flinku.configure(baseUrl: 'https://yourapp.flku.dev');
+  /// ```
+  static void configure({
+    required String baseUrl,
+    bool debug = false,
+    Duration timeout = const Duration(seconds: 5),
+  }) {
+    _config = FlinkuConfig(
+      baseUrl: baseUrl,
+      debug: debug,
+      timeout: timeout,
+    );
     _log('Flinku SDK configured');
   }
 
-  // Match deferred deep link — call this once on app first launch
-  // Returns FlinkuLink with matched=true if a deferred link is found
+  /// Returns true if Flinku.match() has already been called
+  /// and a match was found. Prevents double-matching.
+  static bool get hasMatched => _hasMatched;
+
   static Future<FlinkuLink> match() async {
-    if (!_initialized || _config == null || _prefs == null) {
-      throw StateError('Flinku SDK not initialized. Call Flinku.configure() first.');
+    if (_config == null) {
+      throw StateError('Flinku SDK not configured. Call Flinku.configure() first.');
     }
 
-    try {
-      final alreadyMatched = _prefs!.getBool(_matchedKey) ?? false;
-      if (alreadyMatched) {
-        _log('Match skipped: already matched previously.');
-        return FlinkuLink.noMatch();
+    _prefs ??= await SharedPreferences.getInstance();
+
+    if (_prefs!.getBool(_matchedKey) == true) {
+      final raw = _prefs!.getString(_matchResultKey);
+      if (raw != null) {
+        try {
+          final map = jsonDecode(raw) as Map<String, dynamic>;
+          _hasMatched = true;
+          return FlinkuLink.fromJson(map);
+        } catch (_) {
+          _hasMatched = true;
+          return FlinkuLink.notMatched();
+        }
       }
-
-      final firstLaunch = await _isFirstLaunch();
-      if (!firstLaunch) {
-        _log('Match skipped: not first launch.');
-        return FlinkuLink.noMatch();
-      }
-
-      final client = FlinkuHttp(_config!.baseUrl);
-      final payload = <String, dynamic>{
-        'apiKey': _config!.apiKey,
-        'deviceInfo': {
-          'platform': Platform.operatingSystem,
-          'userAgent': 'Flutter/${Platform.operatingSystemVersion}',
-          'timestamp': DateTime.now().millisecondsSinceEpoch,
-        },
-      };
-
-      final response = await client.post('/api/match', payload);
-      final link = FlinkuLink.fromJson(response);
-
-      if (link.matched) {
-        await _prefs!.setBool(_matchedKey, true);
-      }
-
-      await _markLaunched();
-      return link;
-    } catch (error) {
-      _log('Match failed: $error');
-      try {
-        await _markLaunched();
-      } catch (_) {
-        // keep failures silent
-      }
-      return FlinkuLink.noMatch();
+      _hasMatched = true;
+      return FlinkuLink.notMatched();
     }
+
+    final client = FlinkuHttp(_config!);
+    final userAgent = 'Flutter/${Platform.operatingSystem}';
+    final response = await client.match(userAgent: userAgent);
+    final link = FlinkuLink.fromJson(response);
+
+    if (link.matched) {
+      await _prefs!.setBool(_matchedKey, true);
+      await _prefs!.setString(_matchResultKey, jsonEncode(response));
+      _hasMatched = true;
+    }
+
+    return link;
   }
 
-  // Check if this is the first launch
-  static Future<bool> _isFirstLaunch() async {
-    final launched = _prefs?.getBool(_launchedKey) ?? false;
-    return !launched;
+  static Future<void> reset() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_matchedKey);
+    await prefs.remove(_matchResultKey);
+    _hasMatched = false;
   }
 
-  // Mark first launch as done
-  static Future<void> _markLaunched() async {
-    await _prefs?.setBool(_launchedKey, true);
-  }
-
-  // Log debug messages if debugMode is true
   static void _log(String message) {
-    if (_config?.debugMode ?? false) {
+    if (_config?.debug ?? false) {
       // ignore: avoid_print
       print('[Flinku] $message');
     }

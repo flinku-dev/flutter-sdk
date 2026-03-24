@@ -1,11 +1,23 @@
 class FlinkuConfig {
-  final String apiKey;
   final String baseUrl;
-  final bool debugMode;
+  final bool debug;
+  final Duration timeout;
 
   const FlinkuConfig({
-    required this.apiKey,
-    this.baseUrl = 'http://159.65.159.159:3001',
-    this.debugMode = false,
+    required this.baseUrl,
+    this.debug = false,
+    this.timeout = const Duration(seconds: 5),
   });
+
+  String get subdomain {
+    try {
+      final uri = Uri.parse(baseUrl);
+      final host = uri.host;
+      final parts = host.split('.');
+      if (parts.length >= 3) return parts.first;
+      return host;
+    } catch (_) {
+      return '';
+    }
+  }
 }
