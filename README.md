@@ -6,7 +6,7 @@ Official Flutter SDK for [Flinku](https://flinku.dev) — deferred deep linking 
 
 ```yaml
 dependencies:
-  flinku_sdk: ^0.2.0
+  flinku_sdk: ^0.3.1
 ```
 
 ## Setup
@@ -38,7 +38,7 @@ void initState() {
 Future<void> _checkDeepLink() async {
   final link = await Flinku.match();
 
-  if (link.matched) {
+  if (link != null) {
     // Navigate to the correct screen
     Navigator.pushNamed(context, link.deepLink!);
   }
@@ -54,7 +54,7 @@ Save the link result and navigate after the user logs in:
 final link = await Flinku.match();
 
 // After login completes
-if (link.matched) {
+if (link != null) {
   router.go(link.deepLink!);
 } else {
   router.go('/home');
@@ -68,7 +68,7 @@ Links can carry custom parameters set in the Flinku dashboard:
 ```dart
 final link = await Flinku.match();
 
-if (link.matched) {
+if (link != null) {
   final ref = link.params?['ref']; // e.g. 'instagram'
   final promo = link.params?['promo']; // e.g. 'SAVE20'
   final productId = link.params?['productId']; // e.g. '123'

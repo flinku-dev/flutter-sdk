@@ -1,3 +1,12 @@
+## 0.3.1
+
+* `match()` now POSTs to the root API host (`apiBaseUrl`) derived from `baseUrl`, with body `subdomain` + `userAgent` (`flutter/<platform>`)
+* `match()` returns `FlinkuLink?` — `null` when unmatched, on error, or on non-200 responses
+
+## 0.3.0
+
+* Added `createLink()` and `createLinks()` methods for programmatic link creation
+
 ## 0.2.0
 
 * Project-based architecture — baseUrl is now your project subdomain URL
