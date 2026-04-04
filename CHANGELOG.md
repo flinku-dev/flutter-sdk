@@ -1,3 +1,8 @@
+## 0.3.2
+
+* Documented all public APIs with `dartdoc` comments for pub.dev scoring
+* Added `example/` Flutter app demonstrating `configure`, `match`, and `reset`
+
 ## 0.3.1
 
 * `match()` now POSTs to the root API host (`apiBaseUrl`) derived from `baseUrl`, with body `subdomain` + `userAgent` (`flutter/<platform>`)

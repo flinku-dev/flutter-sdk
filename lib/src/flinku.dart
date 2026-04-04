@@ -7,24 +7,59 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'flinku_config.dart';
 import 'flinku_link.dart';
 
+/// Options for [Flinku.createLink] and [Flinku.createLinks].
+///
+/// Only [title] is required; other fields are sent when non-null.
 class FlinkuLinkOptions {
+  /// Display title for the link in the Flinku dashboard and metadata.
   final String title;
+
+  /// Target in-app deep link URI, e.g. `myapp://promo`.
   final String? deepLink;
+
+  /// String key/value query-style parameters stored on the link.
   final Map<String, String>? params;
+
+  /// Optional custom slug; if omitted, Flinku may assign one.
   final String? slug;
+
+  /// Fallback URL for desktop or unsupported clients.
   final String? desktopUrl;
+
+  /// UTM `source` parameter for analytics.
   final String? utmSource;
+
+  /// UTM `medium` parameter for analytics.
   final String? utmMedium;
+
+  /// UTM `campaign` parameter for analytics.
   final String? utmCampaign;
+
+  /// UTM `content` parameter for analytics.
   final String? utmContent;
+
+  /// UTM `term` parameter for analytics.
   final String? utmTerm;
+
+  /// Optional expiry time for the link (ISO-8601 in JSON).
   final DateTime? expiresAt;
+
+  /// Maximum allowed clicks before the link stops resolving, if supported.
   final int? maxClicks;
+
+  /// Optional password gate for opening the link.
   final String? password;
+
+  /// Open Graph title for link previews.
   final String? ogTitle;
+
+  /// Open Graph description for link previews.
   final String? ogDescription;
+
+  /// Open Graph image URL for link previews.
   final String? ogImageUrl;
 
+  /// Creates link-creation options for the Flinku Links API.
   const FlinkuLinkOptions({
     required this.title,
     this.deepLink,
@@ -44,6 +79,7 @@ class FlinkuLinkOptions {
     this.ogImageUrl,
   });
 
+  /// JSON body for `POST /api/links` (and bulk entries).
   Map<String, dynamic> toJson() => {
         'title': title,
         if (deepLink != null) 'deepLink': deepLink,
@@ -64,13 +100,24 @@ class FlinkuLinkOptions {
       };
 }
 
+/// A short link returned by [Flinku.createLink] or [Flinku.createLinks].
 class FlinkuCreatedLink {
+  /// Server-assigned link identifier.
   final String id;
+
+  /// Path segment or slug for the short URL.
   final String slug;
+
+  /// Public HTTPS short URL users can open or share.
   final String shortUrl;
+
+  /// In-app deep link associated with this short link, if any.
   final String? deepLink;
+
+  /// Custom parameters attached to this link, if any.
   final Map<String, String>? params;
 
+  /// Creates a value from an API JSON object.
   const FlinkuCreatedLink({
     required this.id,
     required this.slug,
@@ -79,6 +126,7 @@ class FlinkuCreatedLink {
     this.params,
   });
 
+  /// Parses the Flinku Links API JSON response into a [FlinkuCreatedLink].
   factory FlinkuCreatedLink.fromJson(Map<String, dynamic> json) {
     Map<String, String>? params;
     final raw = json['params'];
@@ -95,14 +143,34 @@ class FlinkuCreatedLink {
   }
 }
 
+/// Error thrown when link creation fails or [apiKey] is missing.
 class FlinkuException implements Exception {
-  FlinkuException(this.message);
+  /// Human-readable explanation of the failure.
   final String message;
+
+  /// Creates an exception with [message].
+  FlinkuException(this.message);
 
   @override
   String toString() => message;
 }
 
+/// The main Flinku SDK class for deep linking.
+///
+/// Configure once at app startup using [Flinku.configure], then call
+/// [Flinku.match] on every app launch to retrieve deferred deep links.
+///
+/// Example:
+/// ```dart
+/// void main() async {
+///   WidgetsFlutterBinding.ensureInitialized();
+///   Flinku.configure(
+///     baseUrl: 'https://myapp.flku.dev',
+///     apiKey: 'flk_live_...',
+///   );
+///   runApp(MyApp());
+/// }
+/// ```
 class Flinku {
   Flinku._();
 
@@ -115,8 +183,7 @@ class Flinku {
   static const String _matchedKey = 'flinku_matched';
   static const String _matchResultKey = 'flinku_match_result';
 
-  /// Root API origin derived from [baseUrl]: strip the first host label (subdomain).
-  /// e.g. `https://masroofati.flku.dev` → `https://flku.dev`
+  // Root API origin: strip first host label from project [baseUrl].
   static String _deriveApiBaseUrl(String baseUrl) {
     final uri = Uri.parse(baseUrl);
     final scheme = uri.scheme.isNotEmpty ? uri.scheme : 'https';
@@ -138,14 +205,14 @@ class Flinku {
     return Uri(scheme: scheme, host: host, port: port).origin;
   }
 
-  /// Configure Flinku with your project subdomain URL.
+  /// Configures the Flinku SDK with your project settings.
   ///
-  /// Optional [apiKey] is required for [createLink] / [createLinks].
+  /// Must be called before other Flinku methods, typically in `main`.
   ///
-  /// Call this once in main() before runApp():
-  /// ```dart
-  /// Flinku.configure(baseUrl: 'https://yourapp.flku.dev');
-  /// ```
+  /// [baseUrl] is your project subdomain URL, e.g. `https://myapp.flku.dev`.
+  /// [apiKey] is optional and required only for [createLink] and [createLinks].
+  /// [debug] enables console logging from the SDK.
+  /// [timeout] applies to HTTP requests such as [match] and link creation.
   static void configure({
     required String baseUrl,
     String? apiKey,
@@ -162,14 +229,31 @@ class Flinku {
     _log('Flinku SDK configured');
   }
 
-  /// Returns true if Flinku.match() has already been called
-  /// and a match was found. Prevents double-matching.
+  /// Whether [match] has already returned a successful [FlinkuLink] this process
+  /// or restored one from local storage after a prior successful match.
+  ///
+  /// Cleared when [reset] runs.
   static bool get hasMatched => _hasMatched;
 
-  /// Calls `POST $apiBaseUrl/api/match` with [subdomain] and user agent from [baseUrl].
+  /// Matches a deferred deep link for the current install.
   ///
-  /// Returns a [FlinkuLink] when the API sets `matched: true`; otherwise `null`.
-  /// Returns `null` on any error or non-200 response.
+  /// Call on every app launch, for example from your root widget's
+  /// [State.initState] or splash flow.
+  ///
+  /// Returns a [FlinkuLink] if the API responds with `matched: true`, or `null`
+  /// if there is no match, a non-200 response, or a network/parse error.
+  ///
+  /// After a successful match, the JSON payload is stored locally; later calls
+  /// return the same [FlinkuLink] without calling the network again until
+  /// [reset] clears storage.
+  ///
+  /// Example:
+  /// ```dart
+  /// final link = await Flinku.match();
+  /// if (link != null) {
+  ///   navigateTo(link.deepLink!, params: link.params);
+  /// }
+  /// ```
   static Future<FlinkuLink?> match() async {
     if (_config == null || _apiBaseUrl == null) {
       throw StateError('Flinku SDK not configured. Call Flinku.configure() first.');
@@ -234,9 +318,19 @@ class Flinku {
     }
   }
 
-  /// Creates a new deep link using your project API key.
+  /// Creates a new short link programmatically.
   ///
-  /// Set [apiKey] in [configure].
+  /// Requires [apiKey] to be set in [configure].
+  ///
+  /// Example:
+  /// ```dart
+  /// final link = await Flinku.createLink(FlinkuLinkOptions(
+  ///   title: 'Summer Sale',
+  ///   deepLink: 'myapp://promo',
+  ///   params: {'promo': 'SAVE20'},
+  /// ));
+  /// print(link.shortUrl);
+  /// ```
   static Future<FlinkuCreatedLink> createLink(FlinkuLinkOptions options) async {
     if (_apiKey == null) {
       throw FlinkuException('apiKey is required to create links');
@@ -265,9 +359,11 @@ class Flinku {
     return FlinkuCreatedLink.fromJson(data);
   }
 
-  /// Creates multiple links in bulk using your project API key.
+  /// Creates multiple links in bulk.
   ///
-  /// Set [apiKey] in [configure].
+  /// Requires [apiKey] to be set in [configure].
+  ///
+  /// Sends `POST /api/links/bulk` with a `links` array of option maps.
   static Future<List<FlinkuCreatedLink>> createLinks(
     List<FlinkuLinkOptions> links,
   ) async {
@@ -306,6 +402,10 @@ class Flinku {
         .toList();
   }
 
+  /// Resets the cached match result.
+  ///
+  /// Clears local storage used by [match] so the next call can hit the network
+  /// again. Useful in tests and development.
   static Future<void> reset() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_matchedKey);

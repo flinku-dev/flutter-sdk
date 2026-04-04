@@ -1,3 +1,8 @@
 .dart_tool/
 build/
 pubspec.lock
+
+# Example app artifacts
+example/.dart_tool/
+example/.flutter-plugins-dependencies
+example/pubspec.lock

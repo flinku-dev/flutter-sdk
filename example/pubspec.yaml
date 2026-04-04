@@ -1,0 +1,16 @@
+name: flinku_sdk_example
+description: Example app for flinku_sdk
+version: 1.0.0+1
+publish_to: 'none'
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flinku_sdk:
+    path: ../
+
+flutter:
+  uses-material-design: true

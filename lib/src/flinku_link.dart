@@ -1,13 +1,32 @@
+/// Result of a deferred deep link [Flinku.match] call when the server reports a match.
+///
+/// When [matched] is `false`, use [FlinkuLink.notMatched] for a sentinel value.
 class FlinkuLink {
+  /// Whether the Flinku API reported a successful deferred match.
   final bool matched;
+
+  /// In-app route or URI to open when the user opened a Flinku short link before install.
   final String? deepLink;
+
+  /// Short link slug segment from the Flinku service, if provided.
   final String? slug;
+
+  /// Project subdomain label associated with the click, if provided.
   final String? subdomain;
+
+  /// Human-readable title from the link metadata, if provided.
   final String? title;
+
+  /// Custom key/value parameters attached to the link in the Flinku dashboard.
   final Map<String, dynamic>? params;
+
+  /// Server-reported click time, if provided as an ISO-8601 string in JSON.
   final DateTime? clickedAt;
+
+  /// Flinku project identifier for the matched link, if provided.
   final String? projectId;
 
+  /// Creates a link result with explicit field values.
   const FlinkuLink({
     required this.matched,
     this.deepLink,
@@ -19,6 +38,7 @@ class FlinkuLink {
     this.projectId,
   });
 
+  /// Parses a JSON object from the Flinku `/api/match` response into a [FlinkuLink].
   factory FlinkuLink.fromJson(Map<String, dynamic> json) {
     return FlinkuLink(
       matched: json['matched'] == true,
@@ -36,6 +56,7 @@ class FlinkuLink {
     );
   }
 
+  /// A link result with [matched] set to `false`.
   factory FlinkuLink.notMatched() {
     return const FlinkuLink(matched: false);
   }
