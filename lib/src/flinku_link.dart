@@ -26,6 +26,9 @@ class FlinkuLink {
   /// Flinku project identifier for the matched link, if provided.
   final String? projectId;
 
+  /// How the match was resolved, e.g. `clipboard`, `fingerprint`, `referrer`, or `none`.
+  final String? matchType;
+
   /// Creates a link result with explicit field values.
   const FlinkuLink({
     required this.matched,
@@ -36,6 +39,7 @@ class FlinkuLink {
     this.params,
     this.clickedAt,
     this.projectId,
+    this.matchType,
   });
 
   /// Parses a JSON object from the Flinku `/api/match` response into a [FlinkuLink].
@@ -53,6 +57,7 @@ class FlinkuLink {
           ? DateTime.tryParse(json['clickedAt'] as String)
           : null,
       projectId: json['projectId'] as String?,
+      matchType: json['matchType'] as String?,
     );
   }
 
@@ -63,7 +68,7 @@ class FlinkuLink {
 
   @override
   String toString() {
-    return 'FlinkuLink(matched: $matched, deepLink: $deepLink, '
-        'subdomain: $subdomain, params: $params, title: $title)';
+    return 'FlinkuLink(matched: $matched, matchType: $matchType, '
+        'deepLink: $deepLink, subdomain: $subdomain, params: $params, title: $title)';
   }
 }

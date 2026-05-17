@@ -6,7 +6,7 @@ Official Flutter SDK for [Flinku](https://flinku.dev) — deferred deep linking 
 
 ```yaml
 dependencies:
-  flinku_sdk: ^0.3.2
+  flinku_sdk: ^0.3.3
 ```
 
 ## Setup

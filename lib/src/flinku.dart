@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -243,6 +244,10 @@ class Flinku {
   /// Returns a [FlinkuLink] if the API responds with `matched: true`, or `null`
   /// if there is no match, a non-200 response, or a network/parse error.
   ///
+  /// Tries fingerprint matching first, then reads the system clipboard for a
+  /// Flinku short link (`.flku.dev` or your [baseUrl]) and retries via
+  /// clipboard matching when fingerprint returns no match.
+  ///
   /// After a successful match, the JSON payload is stored locally; later calls
   /// return the same [FlinkuLink] without calling the network again until
   /// [reset] clears storage.
@@ -279,12 +284,47 @@ class Flinku {
         return null;
       }
 
-      final uri = Uri.parse('$_apiBaseUrl/api/match');
-      final body = <String, dynamic>{
-        'subdomain': _config!.subdomain,
-        'userAgent': 'flutter/${Platform.operatingSystem}',
-      };
+      final fingerprintResult = await _matchFingerprint();
+      if (fingerprintResult != null) {
+        return fingerprintResult;
+      }
 
+      // Clipboard-based deferred deep linking
+      try {
+        final clipData = await Clipboard.getData(Clipboard.kTextPlain);
+        final clipText = clipData?.text ?? '';
+        final baseUrl = _config!.baseUrl;
+        if (clipText.isNotEmpty &&
+            (clipText.contains('.flku.dev') || clipText.contains(baseUrl))) {
+          await Clipboard.setData(const ClipboardData(text: ''));
+          final clipResult = await _matchWithUrl(clipText);
+          if (clipResult != null) return clipResult;
+        }
+      } catch (_) {}
+
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<FlinkuLink?> _matchFingerprint() async {
+    return _postMatch(<String, dynamic>{
+      'subdomain': _config!.subdomain,
+      'userAgent': 'flutter/${Platform.operatingSystem}',
+    });
+  }
+
+  static Future<FlinkuLink?> _matchWithUrl(String url) async {
+    return _postMatch(<String, dynamic>{
+      'subdomain': _config!.subdomain,
+      'clipboardUrl': url,
+    });
+  }
+
+  static Future<FlinkuLink?> _postMatch(Map<String, dynamic> body) async {
+    try {
+      final uri = Uri.parse('$_apiBaseUrl/api/match');
       final response = await http
           .post(
             uri,

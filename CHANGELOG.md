@@ -1,3 +1,8 @@
+## 0.3.3
+
+* Clipboard fallback in `match()` when fingerprint matching returns no result
+* `FlinkuLink.matchType` — `clipboard`, `fingerprint`, `referrer`, or `none` from the API
+
 ## 0.3.2
 
 * Documented all public APIs with `dartdoc` comments for pub.dev scoring

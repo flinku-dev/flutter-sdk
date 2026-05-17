@@ -21,9 +21,11 @@ void main() {
       'params': <String, dynamic>{'id': 42},
       'clickedAt': '2026-01-15T12:00:00.000Z',
       'projectId': 'proj_1',
+      'matchType': 'fingerprint',
     });
 
     expect(link.matched, isTrue);
+    expect(link.matchType, 'fingerprint');
     expect(link.deepLink, 'testapp://product/42');
     expect(link.slug, 'abc123');
     expect(link.subdomain, 'yourapp');
