@@ -6,7 +6,7 @@ Official Flutter SDK for [Flinku](https://flinku.dev) — deferred deep linking 
 
 ```yaml
 dependencies:
-  flinku_sdk: ^0.3.3
+  flinku_sdk: ^0.6.0
 ```
 
 ## Setup
@@ -75,6 +75,26 @@ if (link != null) {
 }
 ```
 
+## Referrals
+
+```dart
+Flinku.configure(
+  baseUrl: 'https://yourapp.flku.dev',
+  apiKey: 'flk_pk_...',   // required for referrals
+);
+
+Flinku.setUserId(user.id);            // after signup or login
+Flinku.qualifyReferral('purchase');   // when the referred user does the thing you reward
+```
+
+`Flinku.reset()` clears the match cache only. It does **not** clear pending referral attribution, so calling `reset()` after routing a deep link is safe.
+
+## Resetting (testing only)
+
+```dart
+await Flinku.reset(); // clears match cache only; referral attribution is preserved
+```
+
 ## iOS setup
 
 Add your project domain to Associated Domains in Xcode:
@@ -95,12 +115,6 @@ Add intent filters to your `AndroidManifest.xml`:
   <data android:scheme="https"
         android:host="yourapp.flku.dev" />
 </intent-filter>
-```
-
-## Resetting (testing only)
-
-```dart
-await Flinku.reset(); // clears stored match result
 ```
 
 ## Links

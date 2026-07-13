@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -167,11 +170,13 @@ class FlinkuException implements Exception {
 ///   WidgetsFlutterBinding.ensureInitialized();
 ///   Flinku.configure(
 ///     baseUrl: 'https://myapp.flku.dev',
-///     apiKey: 'flk_live_...',
+///     apiKey: 'flk_pk_...',
 ///   );
 ///   runApp(MyApp());
 /// }
 /// ```
+///
+/// Use your publishable key (`flk_pk_`) in apps. Never embed your secret key (`flk_live_`).
 class Flinku {
   Flinku._();
 
@@ -179,10 +184,23 @@ class Flinku {
   static String? _apiKey;
   static String? _apiBaseUrl;
   static bool _hasMatched = false;
+  static bool _secretKeyWarningShown = false;
+  static bool _referralApiKeyWarningShown = false;
   static SharedPreferences? _prefs;
 
   static const String _matchedKey = 'flinku_matched';
   static const String _matchResultKey = 'flinku_match_result';
+  static const String _userIdKey = 'flinku_user_id';
+  /// Survives [reset]. Used by [qualifyReferral] after the pending record is cleared.
+  static const String _referralProjectIdKey = 'flinku_referral_project_id';
+  static const String _pendingReferralKeyPrefix = 'flinku_pending_referral_';
+  static const Duration _pendingReferralTtl = Duration(days: 30);
+
+  static String _referralTrackedKey(String projectId, String userId) =>
+      'referral_tracked_${projectId}_$userId';
+
+  static String _pendingReferralKey(String projectId) =>
+      '$_pendingReferralKeyPrefix$projectId';
 
   // Root API origin: strip first host label from project [baseUrl].
   static String _deriveApiBaseUrl(String baseUrl) {
@@ -212,6 +230,8 @@ class Flinku {
   ///
   /// [baseUrl] is your project subdomain URL, e.g. `https://myapp.flku.dev`.
   /// [apiKey] is optional and required only for [createLink] and [createLinks].
+  /// Accepts publishable keys (`flk_pk_`) or secret keys (`flk_live_`).
+  /// Use your publishable key (`flk_pk_`) in apps. Never embed your secret key (`flk_live_`).
   /// [debug] enables console logging from the SDK.
   /// [timeout] applies to HTTP requests such as [match] and link creation.
   static void configure({
@@ -227,7 +247,32 @@ class Flinku {
     );
     _apiKey = apiKey;
     _apiBaseUrl = _deriveApiBaseUrl(baseUrl);
+    if (apiKey != null &&
+        apiKey.startsWith('flk_live_') &&
+        kDebugMode &&
+        !_secretKeyWarningShown) {
+      _secretKeyWarningShown = true;
+      debugPrint(
+        'FLINKU WARNING: You are embedding a secret key (flk_live_) in your app. '
+        'Anyone can extract it and gain full access to your links. '
+        'Use your publishable key (flk_pk_) instead — find it in your project settings at app.flinku.dev.',
+      );
+    }
     _log('Flinku SDK configured');
+    // Retry a pending referral track if a userId was already stored (e.g. app relaunch).
+    unawaited(_retryPendingReferralAfterConfigure());
+  }
+
+  static Future<void> _retryPendingReferralAfterConfigure() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString(_userIdKey)?.trim();
+      if (userId == null || userId.isEmpty) return;
+      if (!_hasReferralApiKey()) return;
+      await _trackPendingReferral(prefs, userId);
+    } catch (e) {
+      _log('configure referral retry error: $e');
+    }
   }
 
   /// Whether [match] has already returned a successful [FlinkuLink] this process
@@ -351,6 +396,7 @@ class Flinku {
       final link = FlinkuLink.fromJson(data);
       await _prefs!.setBool(_matchedKey, true);
       await _prefs!.setString(_matchResultKey, jsonEncode(data));
+      await _persistPendingReferralIfNeeded(_prefs!, data);
       _hasMatched = true;
       return link;
     } catch (_) {
@@ -392,11 +438,37 @@ class Flinku {
         .timeout(_config!.timeout);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
-      throw FlinkuException('Failed to create link: ${response.body}');
+      throw FlinkuException(_linkCreationErrorMessage(response));
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     return FlinkuCreatedLink.fromJson(data);
+  }
+
+  /// Creates a short link optimistically: returns [FlinkuCreatedLink] immediately
+  /// with a locally generated slug and short URL, then registers the link on
+  /// the server in the background.
+  ///
+  /// Requires [apiKey] to be set in [configure].
+  static FlinkuCreatedLink createLinkInstant(FlinkuLinkOptions options) {
+    if (_apiKey == null) {
+      throw FlinkuException('apiKey is required to create links');
+    }
+    if (_config == null || _apiBaseUrl == null) {
+      throw StateError('Flinku SDK not configured. Call Flinku.configure() first.');
+    }
+
+    final slug = _generateInstantSlug(options.title);
+    final shortUrl = 'https://${_config!.subdomain}.flku.dev/$slug';
+    _createLinkInstantInBackground(options, slug);
+
+    return FlinkuCreatedLink(
+      id: '',
+      slug: slug,
+      shortUrl: shortUrl,
+      deepLink: options.deepLink,
+      params: options.params,
+    );
   }
 
   /// Creates multiple links in bulk.
@@ -429,7 +501,7 @@ class Flinku {
         .timeout(_config!.timeout);
 
     if (response.statusCode != 200 && response.statusCode != 201) {
-      throw FlinkuException('Failed to create links: ${response.body}');
+      throw FlinkuException(_linkCreationErrorMessage(response));
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -442,10 +514,9 @@ class Flinku {
         .toList();
   }
 
-  /// Resets the cached match result.
+  /// Clears the cached match result so the next [match] can hit the network again.
   ///
-  /// Clears local storage used by [match] so the next call can hit the network
-  /// again. Useful in tests and development.
+  /// Does **not** clear pending referral attribution or the stored user id.
   static Future<void> reset() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_matchedKey);
@@ -453,10 +524,301 @@ class Flinku {
     _hasMatched = false;
   }
 
+  /// Stores [userId] locally and tracks a pending referral in the background.
+  ///
+  /// Returns immediately. Network work never blocks or throws to the caller.
+  /// Reads the dedicated pending-referral record written at match time (not the
+  /// match cache), so [reset] cannot drop attribution.
+  /// Tracks at most once per project+user (`referral_tracked_{projectId}_{userId}`).
+  /// Requires [apiKey] in [configure]; otherwise logs a one-time warning and skips.
+  static void setUserId(String userId) {
+    final id = userId.trim();
+    if (id.isEmpty) return;
+    _warnMissingReferralApiKeyOnce();
+    unawaited(_setUserIdInBackground(id));
+  }
+
+  /// Marks the stored user as a qualified referral for optional [event].
+  ///
+  /// No-op if [setUserId] has not been called. Returns immediately.
+  /// Requires [apiKey] in [configure]; otherwise logs a one-time warning and skips.
+  static void qualifyReferral([String? event]) {
+    _warnMissingReferralApiKeyOnce();
+    unawaited(_qualifyReferralInBackground(event));
+  }
+
+  static bool _hasReferralApiKey() =>
+      _apiKey != null && _apiKey!.trim().isNotEmpty;
+
+  static void _warnMissingReferralApiKeyOnce() {
+    if (_hasReferralApiKey() || _referralApiKeyWarningShown) return;
+    _referralApiKeyWarningShown = true;
+    // ignore: avoid_print
+    print(
+      "[Flinku] Referral tracking skipped: no apiKey configured. Pass apiKey: 'flk_pk_...' to Flinku.configure().",
+    );
+  }
+
+  /// Writes `flinku_pending_referral_{projectId}` when the match has a referrerId.
+  /// Independent of the match cache so it survives [reset].
+  static Future<void> _persistPendingReferralIfNeeded(
+    SharedPreferences prefs,
+    Map<String, dynamic> data,
+  ) async {
+    final projectId = data['projectId']?.toString().trim() ?? '';
+    if (projectId.isEmpty) return;
+
+    final paramsRaw = data['params'];
+    if (paramsRaw is! Map) return;
+    final params = Map<String, dynamic>.from(paramsRaw);
+    final referrerId = params['referrerId']?.toString().trim() ??
+        params['referrer_id']?.toString().trim();
+    if (referrerId == null || referrerId.isEmpty) return;
+
+    final referrerLabel = params['referrerLabel']?.toString().trim() ??
+        params['referrer_label']?.toString().trim();
+    final linkId = data['linkId']?.toString().trim() ??
+        data['id']?.toString().trim() ??
+        data['slug']?.toString().trim();
+
+    final value = <String, dynamic>{
+      'referrerId': referrerId,
+      'matchedAt': DateTime.now().millisecondsSinceEpoch / 1000.0,
+      if (referrerLabel != null && referrerLabel.isNotEmpty)
+        'referrerLabel': referrerLabel,
+      if (linkId != null && linkId.isNotEmpty) 'linkId': linkId,
+    };
+
+    await prefs.setString(_pendingReferralKey(projectId), jsonEncode(value));
+    await prefs.setString(_referralProjectIdKey, projectId);
+  }
+
+  /// Returns `(projectId, payload)` for a non-expired pending referral, or null.
+  static Future<({String projectId, Map<String, dynamic> payload})?>
+      _loadPendingReferral(SharedPreferences prefs) async {
+    final now = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    for (final key in prefs.getKeys()) {
+      if (!key.startsWith(_pendingReferralKeyPrefix)) continue;
+      final projectId = key.substring(_pendingReferralKeyPrefix.length);
+      if (projectId.isEmpty) continue;
+
+      final raw = prefs.getString(key);
+      if (raw == null || raw.isEmpty) continue;
+
+      Map<String, dynamic> json;
+      try {
+        json = jsonDecode(raw) as Map<String, dynamic>;
+      } catch (_) {
+        await prefs.remove(key);
+        continue;
+      }
+
+      final matchedAtRaw = json['matchedAt'];
+      final matchedAt = matchedAtRaw is num
+          ? matchedAtRaw.toDouble()
+          : double.tryParse(matchedAtRaw?.toString() ?? '');
+      if (matchedAt == null) {
+        await prefs.remove(key);
+        continue;
+      }
+      if (now - matchedAt > _pendingReferralTtl.inSeconds) {
+        await prefs.remove(key);
+        continue;
+      }
+
+      final referrerId = json['referrerId']?.toString().trim() ?? '';
+      if (referrerId.isEmpty) {
+        await prefs.remove(key);
+        continue;
+      }
+
+      return (projectId: projectId, payload: json);
+    }
+    return null;
+  }
+
+  static Future<void> _setUserIdInBackground(String userId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_userIdKey, userId);
+      if (!_hasReferralApiKey()) return;
+      await _trackPendingReferral(prefs, userId);
+    } catch (e) {
+      _log('setUserId background error: $e');
+    }
+  }
+
+  static Future<void> _trackPendingReferral(
+    SharedPreferences prefs,
+    String userId,
+  ) async {
+    final pending = await _loadPendingReferral(prefs);
+    if (pending == null) return;
+
+    final projectId = pending.projectId;
+    final json = pending.payload;
+    final trackedKey = _referralTrackedKey(projectId, userId);
+    if (prefs.getBool(trackedKey) == true) {
+      await prefs.remove(_pendingReferralKey(projectId));
+      return;
+    }
+
+    final referrerId = json['referrerId']?.toString().trim() ?? '';
+    if (referrerId.isEmpty) {
+      await prefs.remove(_pendingReferralKey(projectId));
+      return;
+    }
+
+    final referrerLabel = json['referrerLabel']?.toString().trim();
+    final linkId = json['linkId']?.toString().trim();
+
+    final body = <String, dynamic>{
+      'projectId': projectId,
+      'referrerId': referrerId,
+      'newUserId': userId,
+      if (referrerLabel != null && referrerLabel.isNotEmpty)
+        'referrerLabel': referrerLabel,
+      if (linkId != null && linkId.isNotEmpty) 'linkId': linkId,
+    };
+
+    await prefs.setString(_referralProjectIdKey, projectId);
+
+    final ok = await _postReferral('/api/referrals/track', body);
+    if (!ok) return;
+    await prefs.setBool(trackedKey, true);
+    await prefs.remove(_pendingReferralKey(projectId));
+  }
+
+  static Future<void> _qualifyReferralInBackground(String? event) async {
+    try {
+      if (!_hasReferralApiKey()) return;
+      final prefs = await SharedPreferences.getInstance();
+      final userId = prefs.getString(_userIdKey)?.trim();
+      if (userId == null || userId.isEmpty) return;
+
+      var projectId = prefs.getString(_referralProjectIdKey)?.trim() ?? '';
+      if (projectId.isEmpty) {
+        final pending = await _loadPendingReferral(prefs);
+        projectId = pending?.projectId ?? '';
+      }
+      if (projectId.isEmpty) {
+        final raw = prefs.getString(_matchResultKey);
+        if (raw != null && raw.isNotEmpty) {
+          try {
+            final data = jsonDecode(raw) as Map<String, dynamic>;
+            projectId = data['projectId']?.toString().trim() ?? '';
+          } catch (_) {}
+        }
+      }
+      if (projectId.isEmpty) return;
+
+      final body = <String, dynamic>{
+        'projectId': projectId,
+        'newUserId': userId,
+        if (event != null && event.trim().isNotEmpty) 'event': event.trim(),
+      };
+      await _postReferral('/api/referrals/qualify', body);
+    } catch (e) {
+      _log('qualifyReferral background error: $e');
+    }
+  }
+
+  /// Returns true on HTTP 2xx. On failure the caller keeps the pending record.
+  static Future<bool> _postReferral(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    if (_apiBaseUrl == null || !_hasReferralApiKey()) {
+      _log('referral skipped: not configured');
+      return false;
+    }
+    try {
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_apiKey',
+      };
+      final response = await http.post(
+        Uri.parse('$_apiBaseUrl$path'),
+        headers: headers,
+        body: jsonEncode(body),
+      );
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        _log('referral $path error: HTTP ${response.statusCode}');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      _log('referral $path error: $e');
+      return false;
+    }
+  }
+
   static void _log(String message) {
     if (_config?.debug ?? false) {
       // ignore: avoid_print
       print('[Flinku] $message');
     }
+  }
+
+  static String _linkCreationErrorMessage(http.Response response) {
+    final body = response.body;
+    if (body.isEmpty) {
+      return 'Failed to create link: HTTP ${response.statusCode}';
+    }
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) {
+        final error = decoded['error'];
+        if (error is String && error.isNotEmpty) {
+          return error;
+        }
+        final message = decoded['message'];
+        if (message is String && message.isNotEmpty) {
+          return message;
+        }
+      }
+    } catch (_) {}
+    return body;
+  }
+
+  static String _generateInstantSlug(String title) {
+    var base = title.toLowerCase().trim();
+    base = base.replaceAll(RegExp(r'[^a-z0-9\s-]'), '');
+    base = base.replaceAll(RegExp(r'\s+'), '-');
+    base = base.replaceAll(RegExp(r'-+'), '-');
+    base = base.replaceAll(RegExp(r'^-+|-+$'), '');
+    if (base.isEmpty) {
+      base = 'link';
+    }
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final rand = Random();
+    final suffix = List.generate(4, (_) => chars[rand.nextInt(chars.length)]).join();
+    return '$base-$suffix';
+  }
+
+  static void _createLinkInstantInBackground(
+    FlinkuLinkOptions options,
+    String slug,
+  ) {
+    final body = Map<String, dynamic>.from(options.toJson())..['slug'] = slug;
+    final uri = Uri.parse('$_apiBaseUrl/api/links');
+    unawaited(() async {
+      try {
+        final response = await http.post(
+          uri,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $_apiKey',
+          },
+          body: jsonEncode(body),
+        );
+        if (response.statusCode != 200 && response.statusCode != 201) {
+          final message = _linkCreationErrorMessage(response);
+          _log('createLinkInstant background error: $message');
+        }
+      } catch (e) {
+        _log('createLinkInstant background error: $e');
+      }
+    }());
   }
 }
