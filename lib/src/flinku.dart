@@ -194,10 +194,12 @@ class Flinku {
   /// Survives [reset]. Used by [qualifyReferral] after the pending record is cleared.
   static const String _referralProjectIdKey = 'flinku_referral_project_id';
   static const String _pendingReferralKeyPrefix = 'flinku_pending_referral_';
+  static const String _pendingReferralIndexKey = 'flinku_pending_referral_index';
+  static const String _referralTrackedKeyPrefix = 'referral_tracked_';
   static const Duration _pendingReferralTtl = Duration(days: 30);
 
   static String _referralTrackedKey(String projectId, String userId) =>
-      'referral_tracked_${projectId}_$userId';
+      '$_referralTrackedKeyPrefix${projectId}_$userId';
 
   static String _pendingReferralKey(String projectId) =>
       '$_pendingReferralKeyPrefix$projectId';
@@ -524,6 +526,32 @@ class Flinku {
     _hasMatched = false;
   }
 
+  /// Clears all Flinku local state, including referral attribution and stored user id.
+  ///
+  /// **Testing only — do not call in production.** Clearing attribution destroys
+  /// real referral data. [reset] was narrowed in 0.6.0 so production deep-link
+  /// handling does not wipe referrals; use [resetAll] only when you need a full
+  /// wipe during development or QA.
+  static Future<void> resetAll() async {
+    await reset();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_userIdKey);
+    await prefs.remove(_referralProjectIdKey);
+    await prefs.remove(_matchResultKey);
+
+    for (final projectId in _getPendingReferralIndex(prefs)) {
+      await prefs.remove(_pendingReferralKey(projectId));
+    }
+    await prefs.remove(_pendingReferralIndexKey);
+
+    for (final key in prefs.getKeys()) {
+      if (key.startsWith(_pendingReferralKeyPrefix) ||
+          key.startsWith(_referralTrackedKeyPrefix)) {
+        await prefs.remove(key);
+      }
+    }
+  }
+
   /// Stores [userId] locally and tracks a pending referral in the background.
   ///
   /// Returns immediately. Network work never blocks or throws to the caller.
@@ -591,6 +619,51 @@ class Flinku {
 
     await prefs.setString(_pendingReferralKey(projectId), jsonEncode(value));
     await prefs.setString(_referralProjectIdKey, projectId);
+    await _addPendingReferralIndex(prefs, projectId);
+  }
+
+  static List<String> _getPendingReferralIndex(SharedPreferences prefs) {
+    final raw = prefs.getString(_pendingReferralIndexKey);
+    if (raw == null || raw.isEmpty) {
+      final pid = prefs.getString(_referralProjectIdKey)?.trim();
+      return pid != null && pid.isNotEmpty ? [pid] : [];
+    }
+    return raw
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+
+  static Future<void> _addPendingReferralIndex(
+    SharedPreferences prefs,
+    String projectId,
+  ) async {
+    final ids = _getPendingReferralIndex(prefs);
+    if (!ids.contains(projectId)) {
+      ids.add(projectId);
+    }
+    await prefs.setString(_pendingReferralIndexKey, ids.join(','));
+  }
+
+  static Future<void> _removePendingReferralIndex(
+    SharedPreferences prefs,
+    String projectId,
+  ) async {
+    final ids = _getPendingReferralIndex(prefs)..remove(projectId);
+    if (ids.isEmpty) {
+      await prefs.remove(_pendingReferralIndexKey);
+    } else {
+      await prefs.setString(_pendingReferralIndexKey, ids.join(','));
+    }
+  }
+
+  static Future<void> _clearPendingReferral(
+    SharedPreferences prefs,
+    String projectId,
+  ) async {
+    await prefs.remove(_pendingReferralKey(projectId));
+    await _removePendingReferralIndex(prefs, projectId);
   }
 
   /// Returns `(projectId, payload)` for a non-expired pending referral, or null.
@@ -623,6 +696,7 @@ class Flinku {
       }
       if (now - matchedAt > _pendingReferralTtl.inSeconds) {
         await prefs.remove(key);
+        await _removePendingReferralIndex(prefs, projectId);
         continue;
       }
 
@@ -659,13 +733,13 @@ class Flinku {
     final json = pending.payload;
     final trackedKey = _referralTrackedKey(projectId, userId);
     if (prefs.getBool(trackedKey) == true) {
-      await prefs.remove(_pendingReferralKey(projectId));
+      await _clearPendingReferral(prefs, projectId);
       return;
     }
 
     final referrerId = json['referrerId']?.toString().trim() ?? '';
     if (referrerId.isEmpty) {
-      await prefs.remove(_pendingReferralKey(projectId));
+      await _clearPendingReferral(prefs, projectId);
       return;
     }
 
@@ -686,7 +760,7 @@ class Flinku {
     final ok = await _postReferral('/api/referrals/track', body);
     if (!ok) return;
     await prefs.setBool(trackedKey, true);
-    await prefs.remove(_pendingReferralKey(projectId));
+    await _clearPendingReferral(prefs, projectId);
   }
 
   static Future<void> _qualifyReferralInBackground(String? event) async {
