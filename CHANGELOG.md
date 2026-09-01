@@ -12,6 +12,20 @@
 * iOS: Install Referrer is a silent no-op (channel always returns null).
 * Public API of `Flinku.configure` / `Flinku.match` is unchanged.
 
+
+## 0.7.3 - 2026-09-22
+
+* Optional `customDomain` on `Flinku.configure` for active custom link domains; `createLinkInstant` and clipboard matching use it when set.
+* `baseUrl` is validated as `https://{subdomain}.flku.dev`; API requests use `https://flku.dev`.
+
+## 0.7.2 - 2026-09-03
+
+* `createLinkInstant` retries the background POST up to three times (1s, 2s, 4s backoff) on transient failures (network, timeout, 5xx, 429). Terminal errors (400, 403, 409) are not retried.
+
+## 0.7.1 - 2026-09-02
+
+* Metadata and documentation only: updated pub.dev description, README, and added `referral` topic. No code changes.
+
 ## 0.7.0 — 2026-07-21
 
 * `Flinku.resetAll()` — testing-only full local wipe (match cache, user id, pending referral, tracked-once flags). Does not change `reset()` behaviour.
