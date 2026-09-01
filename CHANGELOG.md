@@ -1,3 +1,7 @@
+## 0.7.1 — 2026-09-02
+
+* Metadata and documentation only: updated pub.dev description, README, and added `referral` topic. No code changes.
+
 ## 0.7.0 — 2026-07-21
 
 * `Flinku.resetAll()` — testing-only full local wipe (match cache, user id, pending referral, tracked-once flags). Does not change `reset()` behaviour.

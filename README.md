@@ -1,6 +1,8 @@
 # flinku_sdk
 
-Official Flutter SDK for [Flinku](https://flinku.dev) — deferred deep linking for iOS and Android. The modern replacement for Firebase Dynamic Links.
+Official Flutter SDK for [Flinku](https://flinku.dev) — deferred deep linking for iOS and Android.
+
+Firebase Dynamic Links shut down in August 2025. If you are migrating off `firebase_dynamic_links`, flinku_sdk is a maintained alternative: configure your subdomain, call `match()` on first launch, and route users to the right screen after install.
 
 ## Installation
 
