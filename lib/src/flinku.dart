@@ -943,29 +943,61 @@ class Flinku {
     return '$base-$suffix';
   }
 
+  static const _instantRetryBackoff = [Duration(seconds: 1), Duration(seconds: 2), Duration(seconds: 4)];
+
+  static bool _isRetryableInstantLinkStatus(int statusCode) {
+    if (statusCode == 429) return true;
+    if (statusCode >= 500) return true;
+    return false;
+  }
+
+  /// When set, used instead of [http.post] for createLinkInstant background POSTs (tests only).
+  @visibleForTesting
+  static Future<http.Response> Function({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+  })? debugInstantHttpPost;
+
   static void _createLinkInstantInBackground(
     FlinkuLinkOptions options,
     String slug,
   ) {
     final body = Map<String, dynamic>.from(options.toJson())..['slug'] = slug;
     final uri = Uri.parse('$_apiBaseUrl/api/links');
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $_apiKey',
+    };
+    final encoded = jsonEncode(body);
+    // Retries run in the background; if the process dies mid-retry, attempts stop.
     unawaited(() async {
-      try {
-        final response = await http.post(
-          uri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $_apiKey',
-          },
-          body: jsonEncode(body),
-        );
-        if (response.statusCode != 200 && response.statusCode != 201) {
-          final message = _linkCreationErrorMessage(response);
-          _log('createLinkInstant background error: $message');
+      var lastMessage = 'Failed to create link';
+      for (var attempt = 0; attempt < 3; attempt++) {
+        try {
+          final response = debugInstantHttpPost != null
+              ? await debugInstantHttpPost!(
+                  uri: uri,
+                  headers: headers,
+                  body: encoded,
+                )
+              : await http.post(uri, headers: headers, body: encoded);
+          if (response.statusCode == 200 || response.statusCode == 201) {
+            return;
+          }
+          lastMessage = _linkCreationErrorMessage(response);
+          if (!_isRetryableInstantLinkStatus(response.statusCode)) {
+            _log('createLinkInstant background error: $lastMessage');
+            return;
+          }
+        } catch (e) {
+          lastMessage = e.toString();
         }
-      } catch (e) {
-        _log('createLinkInstant background error: $e');
+        if (attempt < 2) {
+          await Future<void>.delayed(_instantRetryBackoff[attempt]);
+        }
       }
+      _log('createLinkInstant background error: $lastMessage');
     }());
   }
 }
