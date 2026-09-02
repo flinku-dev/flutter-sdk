@@ -1,7 +1,29 @@
+import 'dart:convert';
+
 import 'package:flinku_sdk/flinku_sdk.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  const channel = MethodChannel('flinku_sdk/install_referrer');
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    Flinku.debugResetForTest();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+  });
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
+    Flinku.debugResetForTest();
+  });
+
   test('FlinkuLink.notMatched returns unmatched link', () {
     final link = FlinkuLink.notMatched();
 
@@ -69,5 +91,180 @@ void main() {
     expect(link.shortUrl, 'https://flku.dev/abc');
     expect(link.deepLink, 'myapp://x');
     expect(link.params, {'a': '1'});
+  });
+
+  group('Play Install Referrer match', () {
+    http.Response matchedReferrerResponse() {
+      return http.Response(
+        jsonEncode(<String, dynamic>{
+          'matched': true,
+          'matchType': 'referrer',
+          'deepLink': 'myapp://from-referrer',
+          'slug': 'ref-slug',
+          'subdomain': 'myapp',
+          'params': <String, dynamic>{},
+          'projectId': 'proj_ref',
+        }),
+        200,
+      );
+    }
+
+    http.Response unmatchedResponse() {
+      return http.Response(
+        jsonEncode(<String, dynamic>{
+          'matched': false,
+          'matchType': 'none',
+        }),
+        200,
+      );
+    }
+
+    test('referrer present and valid posts referrer and returns match', () async {
+      Flinku.debugIsAndroid = () => true;
+      final bodies = <Map<String, dynamic>>[];
+      var channelCalls = 0;
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        channelCalls++;
+        expect(call.method, 'getInstallReferrer');
+        return 'flinku_click=click_abc&utm_source=play';
+      });
+
+      Flinku.debugHttpPost = ({
+        required uri,
+        required headers,
+        required body,
+        required timeout,
+      }) async {
+        bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        return matchedReferrerResponse();
+      };
+
+      Flinku.configure(baseUrl: 'https://myapp.flku.dev');
+      final link = await Flinku.match();
+
+      expect(channelCalls, 1);
+      expect(bodies, hasLength(1));
+      expect(bodies.first['referrer'], 'flinku_click=click_abc&utm_source=play');
+      expect(bodies.first['subdomain'], 'myapp');
+      expect(bodies.first.containsKey('clipboardUrl'), isFalse);
+      expect(bodies.first.containsKey('userAgent'), isFalse);
+      expect(link, isNotNull);
+      expect(link!.matchType, 'referrer');
+      expect(link.deepLink, 'myapp://from-referrer');
+    });
+
+    test('referrer present without flinku_click falls through to fingerprint',
+        () async {
+      Flinku.debugIsAndroid = () => true;
+      final bodies = <Map<String, dynamic>>[];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        return 'utm_source=google-play&utm_medium=organic';
+      });
+
+      Flinku.debugHttpPost = ({
+        required uri,
+        required headers,
+        required body,
+        required timeout,
+      }) async {
+        bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        return unmatchedResponse();
+      };
+
+      Flinku.configure(baseUrl: 'https://myapp.flku.dev');
+      final link = await Flinku.match();
+
+      expect(link, isNull);
+      expect(bodies, isNotEmpty);
+      expect(bodies.first.containsKey('referrer'), isFalse);
+      expect(bodies.first['userAgent'], startsWith('flutter/'));
+    });
+
+    test('channel returns null falls through to fingerprint', () async {
+      Flinku.debugIsAndroid = () => true;
+      final bodies = <Map<String, dynamic>>[];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async => null);
+
+      Flinku.debugHttpPost = ({
+        required uri,
+        required headers,
+        required body,
+        required timeout,
+      }) async {
+        bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        return unmatchedResponse();
+      };
+
+      Flinku.configure(baseUrl: 'https://myapp.flku.dev');
+      await Flinku.match();
+
+      expect(bodies, isNotEmpty);
+      expect(bodies.first.containsKey('referrer'), isFalse);
+      expect(bodies.first['userAgent'], startsWith('flutter/'));
+    });
+
+    test('channel throws falls through to fingerprint', () async {
+      Flinku.debugIsAndroid = () => true;
+      final bodies = <Map<String, dynamic>>[];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        throw PlatformException(code: 'UNAVAILABLE', message: 'fail');
+      });
+
+      Flinku.debugHttpPost = ({
+        required uri,
+        required headers,
+        required body,
+        required timeout,
+      }) async {
+        bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        return unmatchedResponse();
+      };
+
+      Flinku.configure(baseUrl: 'https://myapp.flku.dev');
+      final link = await Flinku.match();
+
+      expect(link, isNull);
+      expect(bodies, isNotEmpty);
+      expect(bodies.first.containsKey('referrer'), isFalse);
+      expect(bodies.first['userAgent'], startsWith('flutter/'));
+    });
+
+    test('iOS path skips install referrer channel', () async {
+      Flinku.debugIsAndroid = () => false;
+      var channelCalls = 0;
+      final bodies = <Map<String, dynamic>>[];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        channelCalls++;
+        return 'flinku_click=should_not_be_used';
+      });
+
+      Flinku.debugHttpPost = ({
+        required uri,
+        required headers,
+        required body,
+        required timeout,
+      }) async {
+        bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        return unmatchedResponse();
+      };
+
+      Flinku.configure(baseUrl: 'https://myapp.flku.dev');
+      await Flinku.match();
+
+      expect(channelCalls, 0);
+      expect(bodies, isNotEmpty);
+      expect(bodies.first.containsKey('referrer'), isFalse);
+      expect(bodies.first['userAgent'], startsWith('flutter/'));
+    });
   });
 }

@@ -1,13 +1,17 @@
 # flinku_sdk
 
-Official Flutter SDK for [Flinku](https://flinku.dev) — deferred deep linking for iOS and Android. The modern replacement for Firebase Dynamic Links.
+Official Flutter SDK for [Flinku](https://flinku.dev) — deferred deep linking for iOS and Android.
+
+Firebase Dynamic Links shut down in August 2025. If you are migrating off `firebase_dynamic_links`, flinku_sdk is a maintained alternative: configure your subdomain, call `match()` on first launch, and route users to the right screen after install.
 
 ## Installation
 
 ```yaml
 dependencies:
-  flinku_sdk: ^0.6.0
+  flinku_sdk: ^0.8.0
 ```
+
+After upgrading to **0.8.0+**, do a full app **rebuild** (not just hot reload / `pub get`). The package is now a Flutter plugin with Android platform code for Play Install Referrer.
 
 ## Setup
 
@@ -19,7 +23,10 @@ import 'package:flinku_sdk/flinku_sdk.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  Flinku.configure(baseUrl: 'https://yourapp.flku.dev');
+  Flinku.configure(
+    baseUrl: 'https://yourapp.flku.dev',
+    apiKey: 'flk_pk_...', // publishable key; required for referrals / createLink
+  );
   runApp(const MyApp());
 }
 ```
@@ -44,6 +51,14 @@ Future<void> _checkDeepLink() async {
   }
 }
 ```
+
+### Match order
+
+1. **Android Play Install Referrer** — when the install came from Google Play with a Flinku `flinku_click=` parameter (deterministic)
+2. **Fingerprint** — probabilistic device/IP match
+3. **Clipboard** — if a Flinku short link was copied before install
+
+On iOS, Install Referrer is skipped (no-op); matching uses fingerprint then clipboard.
 
 ## With authentication flow
 
@@ -116,6 +131,10 @@ Add intent filters to your `AndroidManifest.xml`:
         android:host="yourapp.flku.dev" />
 </intent-filter>
 ```
+
+No extra Install Referrer setup is required — the plugin depends on
+`com.android.installreferrer:installreferrer:2.2` and reads the referrer
+automatically inside `Flinku.match()` (minSdk 21).
 
 ## Links
 

@@ -4,10 +4,11 @@ import 'package:flinku_sdk/flinku_sdk.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Configure Flinku with your project settings
+  // Configure Flinku with your project settings.
+  // Use a publishable key (flk_pk_...) in apps — never embed flk_live_.
   Flinku.configure(
     baseUrl: 'https://myapp.flku.dev',
-    apiKey: 'flk_live_your_api_key', // optional, for createLink
+    apiKey: 'flk_pk_your_publishable_key', // optional; required for referrals / createLink
   );
 
   runApp(const MyApp());
@@ -42,13 +43,16 @@ class _HomeScreenState extends State<HomeScreen> {
     _matchLink();
   }
 
+  /// On Android, match() tries Play Install Referrer first (deterministic when
+  /// the install came through Play with flinku_click=), then fingerprint, then
+  /// clipboard. Rebuild the app after upgrading to 0.8.0+ to load plugin code.
   Future<void> _matchLink() async {
     final link = await Flinku.match();
     if (!mounted) return;
     setState(() {
       _link = link;
       _status = link != null
-          ? '✅ Link matched: ${link.deepLink}'
+          ? '✅ Link matched (${link.matchType}): ${link.deepLink}'
           : '❌ No deferred link found';
     });
   }
@@ -72,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (_link != null) ...[
               const SizedBox(height: 16),
               Text('Deep link: ${_link!.deepLink}'),
+              Text('Match type: ${_link!.matchType}'),
               Text('Params: ${_link!.params}'),
             ],
             const SizedBox(height: 24),

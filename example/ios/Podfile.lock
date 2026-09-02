@@ -1,0 +1,29 @@
+PODS:
+  - flinku_sdk (0.8.0-beta.1):
+    - Flutter
+  - Flutter (1.0.0)
+  - shared_preferences_foundation (0.0.1):
+    - Flutter
+    - FlutterMacOS
+
+DEPENDENCIES:
+  - flinku_sdk (from `.symlinks/plugins/flinku_sdk/ios`)
+  - Flutter (from `Flutter`)
+  - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
+
+EXTERNAL SOURCES:
+  flinku_sdk:
+    :path: ".symlinks/plugins/flinku_sdk/ios"
+  Flutter:
+    :path: Flutter
+  shared_preferences_foundation:
+    :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
+
+SPEC CHECKSUMS:
+  flinku_sdk: d93ad229e32ddd2f902610c873e43517525981ff
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  shared_preferences_foundation: 5086985c1d43c5ba4d5e69a4e8083a389e2909e6
+
+PODFILE CHECKSUM: 30d505a55b9838f3cd050f155dedca6853864f4d
+
+COCOAPODS: 1.16.2

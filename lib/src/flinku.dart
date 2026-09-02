@@ -198,6 +198,40 @@ class Flinku {
   static const String _referralTrackedKeyPrefix = 'referral_tracked_';
   static const Duration _pendingReferralTtl = Duration(days: 30);
 
+  /// Channel to the Android Play Install Referrer plugin (iOS stub returns null).
+  @visibleForTesting
+  static MethodChannel installReferrerChannel =
+      const MethodChannel('flinku_sdk/install_referrer');
+
+  /// Override for unit tests (defaults to real Android detection).
+  @visibleForTesting
+  static bool Function() debugIsAndroid =
+      () => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  /// When set, used instead of [http.post] so match flows can be tested offline.
+  @visibleForTesting
+  static Future<http.Response> Function({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  })? debugHttpPost;
+
+  /// Resets static SDK state and test doubles. For unit tests only.
+  @visibleForTesting
+  static void debugResetForTest() {
+    _config = null;
+    _apiKey = null;
+    _apiBaseUrl = null;
+    _hasMatched = false;
+    _secretKeyWarningShown = false;
+    _referralApiKeyWarningShown = false;
+    _prefs = null;
+    debugHttpPost = null;
+    debugIsAndroid =
+        () => !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+  }
+
   static String _referralTrackedKey(String projectId, String userId) =>
       '$_referralTrackedKeyPrefix${projectId}_$userId';
 
@@ -291,9 +325,9 @@ class Flinku {
   /// Returns a [FlinkuLink] if the API responds with `matched: true`, or `null`
   /// if there is no match, a non-200 response, or a network/parse error.
   ///
-  /// Tries fingerprint matching first, then reads the system clipboard for a
-  /// Flinku short link (`.flku.dev` or your [baseUrl]) and retries via
-  /// clipboard matching when fingerprint returns no match.
+  /// On Android, tries Play Install Referrer first (deterministic when the install
+  /// came through the Play Store with a Flinku click id). Then fingerprint matching,
+  /// then the system clipboard for a Flinku short link (`.flku.dev` or your [baseUrl]).
   ///
   /// After a successful match, the JSON payload is stored locally; later calls
   /// return the same [FlinkuLink] without calling the network again until
@@ -331,12 +365,19 @@ class Flinku {
         return null;
       }
 
+      // 1. Play Install Referrer (Android only) — deterministic when flinku_click= is present
+      final referrerResult = await _matchPlayInstallReferrer();
+      if (referrerResult != null) {
+        return referrerResult;
+      }
+
+      // 2. Fingerprint
       final fingerprintResult = await _matchFingerprint();
       if (fingerprintResult != null) {
         return fingerprintResult;
       }
 
-      // Clipboard-based deferred deep linking
+      // 3. Clipboard-based deferred deep linking
       try {
         final clipData = await Clipboard.getData(Clipboard.kTextPlain);
         final clipText = clipData?.text ?? '';
@@ -350,6 +391,28 @@ class Flinku {
       } catch (_) {}
 
       return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Reads Play Install Referrer on Android and POSTs when it contains `flinku_click=`.
+  /// Non-Android, null, missing click id, or any error → null (fall through).
+  static Future<FlinkuLink?> _matchPlayInstallReferrer() async {
+    try {
+      if (!debugIsAndroid()) return null;
+      final raw = await installReferrerChannel
+          .invokeMethod<String?>('getInstallReferrer')
+          .timeout(_config?.timeout ?? const Duration(seconds: 5));
+      if (raw == null) return null;
+      final referrer = raw.trim();
+      if (referrer.isEmpty || !referrer.contains('flinku_click=')) {
+        return null;
+      }
+      return _postMatch(<String, dynamic>{
+        'subdomain': _config!.subdomain,
+        'referrer': referrer,
+      });
     } catch (_) {
       return null;
     }
@@ -372,13 +435,23 @@ class Flinku {
   static Future<FlinkuLink?> _postMatch(Map<String, dynamic> body) async {
     try {
       final uri = Uri.parse('$_apiBaseUrl/api/match');
-      final response = await http
-          .post(
-            uri,
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode(body),
-          )
-          .timeout(_config!.timeout);
+      final headers = const {'Content-Type': 'application/json'};
+      final encoded = jsonEncode(body);
+      final timeout = _config!.timeout;
+      final response = debugHttpPost != null
+          ? await debugHttpPost!(
+              uri: uri,
+              headers: headers,
+              body: encoded,
+              timeout: timeout,
+            )
+          : await http
+              .post(
+                uri,
+                headers: headers,
+                body: encoded,
+              )
+              .timeout(timeout);
 
       if (response.statusCode != 200) {
         return null;

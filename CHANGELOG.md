@@ -1,3 +1,17 @@
+## 0.8.0-beta.1
+
+* Prerelease of 0.8.0 for early testing. Does not satisfy `^0.7.0` — opt in with
+  `flinku_sdk: 0.8.0-beta.1`. Promote to stable `0.8.0` after field validation.
+* **Play Install Referrer (Android):** `match()` now reads the Google Play Install
+  Referrer via a native plugin and sends it as `referrer` to `/api/match` when
+  the string contains `flinku_click=`. Deferred matching is deterministic for
+  installs that come through the Play Store (same path as the native Android SDK).
+* Converted `flinku_sdk` from a pure Dart package to a Flutter plugin
+  (`android/` + `ios/` stub). **Apps must rebuild** to pick up the platform code;
+  a pub get alone is not enough.
+* iOS: Install Referrer is a silent no-op (channel always returns null).
+* Public API of `Flinku.configure` / `Flinku.match` is unchanged.
+
 ## 0.7.0 — 2026-07-21
 
 * `Flinku.resetAll()` — testing-only full local wipe (match cache, user id, pending referral, tracked-once flags). Does not change `reset()` behaviour.
@@ -38,25 +52,3 @@
 
 * `match()` now POSTs to the root API host (`apiBaseUrl`) derived from `baseUrl`, with body `subdomain` + `userAgent` (`flutter/<platform>`)
 * `match()` returns `FlinkuLink?` — `null` when unmatched, on error, or on non-200 responses
-
-## 0.3.0
-
-* Added `createLink()` and `createLinks()` methods for programmatic link creation
-
-## 0.2.0
-
-* Project-based architecture — baseUrl is now your project subdomain URL
-* Added `params` to FlinkuLink — access custom parameters from your links
-* Added `title`, `clickedAt`, `subdomain`, `projectId` to FlinkuLink
-* Added timeout configuration (default 5 seconds)
-* Added retry logic — retries once on network failure
-* Added double-match prevention — match() returns cached result after first match
-* Added `Flinku.reset()` for testing
-* Updated subdomain auto-extraction from baseUrl
-
-## 0.1.0
-
-* Initial release
-* Deferred deep linking support for iOS and Android
-* Fingerprint-based link matching
-* Simple 3-line integration
