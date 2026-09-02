@@ -1,3 +1,7 @@
+## 0.7.2 — 2026-09-03
+
+* `createLinkInstant` retries the background POST up to three times (1s, 2s, 4s backoff) on transient failures (network, timeout, 5xx, 429). Terminal errors (400, 403, 409) are not retried.
+
 ## 0.7.1 — 2026-09-02
 
 * Metadata and documentation only: updated pub.dev description, README, and added `referral` topic. No code changes.
