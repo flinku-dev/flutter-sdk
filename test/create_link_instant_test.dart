@@ -28,6 +28,68 @@ void main() {
     await Future<void>.delayed(const Duration(seconds: 2));
   }
 
+  test('background POST targets https://flku.dev', () async {
+    Uri? captured;
+    Flinku.debugInstantHttpPost = ({
+      required uri,
+      required headers,
+      required body,
+    }) async {
+      captured = uri;
+      return http.Response(jsonEncode({'id': '1', 'slug': 'x'}), 201);
+    };
+
+    Flinku.createLinkInstant(
+      FlinkuLinkOptions(title: 'Test', deepLink: 'app://x'),
+    );
+    await pumpRetries();
+    expect(captured?.origin, 'https://flku.dev');
+    expect(captured?.path, '/api/links');
+  });
+
+  test('uses customDomain for instant short URL', () {
+    Flinku.configure(
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      customDomain: 'Go.Example.COM.',
+    );
+    final created = Flinku.createLinkInstant(
+      FlinkuLinkOptions(title: 'Sale', deepLink: 'app://x'),
+    );
+    expect(created.shortUrl, startsWith('https://go.example.com/'));
+  });
+
+  test('background POST targets https://flku.dev', () async {
+    Uri? captured;
+    Flinku.debugInstantHttpPost = ({
+      required uri,
+      required headers,
+      required body,
+    }) async {
+      captured = uri;
+      return http.Response(jsonEncode({'id': '1', 'slug': 'x'}), 201);
+    };
+
+    Flinku.createLinkInstant(
+      FlinkuLinkOptions(title: 'Test', deepLink: 'app://x'),
+    );
+    await pumpRetries();
+    expect(captured?.origin, 'https://flku.dev');
+    expect(captured?.path, '/api/links');
+  });
+
+  test('uses customDomain for instant short URL', () {
+    Flinku.configure(
+      baseUrl: baseUrl,
+      apiKey: apiKey,
+      customDomain: 'Go.Example.COM.',
+    );
+    final created = Flinku.createLinkInstant(
+      FlinkuLinkOptions(title: 'Sale', deepLink: 'app://x'),
+    );
+    expect(created.shortUrl, startsWith('https://go.example.com/'));
+  });
+
   test('retries 500 then succeeds without logging', () async {
     var calls = 0;
     Flinku.debugInstantHttpPost = ({

@@ -8,7 +8,7 @@ Firebase Dynamic Links shut down in August 2025. If you are migrating off `fireb
 
 ```yaml
 dependencies:
-  flinku_sdk: ^0.7.2
+  flinku_sdk: ^0.7.3
 ```
 
 ## Setup
