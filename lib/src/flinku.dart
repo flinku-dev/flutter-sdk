@@ -238,28 +238,6 @@ class Flinku {
   static String _pendingReferralKey(String projectId) =>
       '$_pendingReferralKeyPrefix$projectId';
 
-  // Root API origin: strip first host label from project [baseUrl].
-  static String _deriveApiBaseUrl(String baseUrl) {
-    final uri = Uri.parse(baseUrl);
-    final scheme = uri.scheme.isNotEmpty ? uri.scheme : 'https';
-    if (uri.host.isEmpty) {
-      return baseUrl;
-    }
-    final parts = uri.host.split('.');
-    final host = parts.length >= 3 ? parts.sublist(1).join('.') : uri.host;
-    final int? port;
-    if (scheme == 'https' && uri.port != 443) {
-      port = uri.port;
-    } else if (scheme == 'http' && uri.port != 80) {
-      port = uri.port;
-    } else if (scheme != 'https' && scheme != 'http') {
-      port = uri.port;
-    } else {
-      port = null;
-    }
-    return Uri(scheme: scheme, host: host, port: port).origin;
-  }
-
   /// Configures the Flinku SDK with your project settings.
   ///
   /// Must be called before other Flinku methods, typically in `main`.
@@ -268,21 +246,25 @@ class Flinku {
   /// [apiKey] is optional and required only for [createLink] and [createLinks].
   /// Accepts publishable keys (`flk_pk_`) or secret keys (`flk_live_`).
   /// Use your publishable key (`flk_pk_`) in apps. Never embed your secret key (`flk_live_`).
+  /// [customDomain] is your active custom link host (e.g. `go.example.com`), if any.
   /// [debug] enables console logging from the SDK.
   /// [timeout] applies to HTTP requests such as [match] and link creation.
   static void configure({
     required String baseUrl,
+    String? customDomain,
     String? apiKey,
     bool debug = false,
     Duration timeout = const Duration(seconds: 5),
   }) {
+    final parsed = parseProjectBaseUrl(baseUrl);
     _config = FlinkuConfig(
-      baseUrl: baseUrl,
+      baseUrl: parsed.baseUrl,
+      customDomain: normalizeCustomDomain(customDomain),
       debug: debug,
       timeout: timeout,
     );
     _apiKey = apiKey;
-    _apiBaseUrl = _deriveApiBaseUrl(baseUrl);
+    _apiBaseUrl = flinkuApiBaseUrl;
     if (apiKey != null &&
         apiKey.startsWith('flk_live_') &&
         kDebugMode &&
@@ -381,9 +363,8 @@ class Flinku {
       try {
         final clipData = await Clipboard.getData(Clipboard.kTextPlain);
         final clipText = clipData?.text ?? '';
-        final baseUrl = _config!.baseUrl;
         if (clipText.isNotEmpty &&
-            (clipText.contains('.flku.dev') || clipText.contains(baseUrl))) {
+            flinkuClipboardUrlAccepted(clipText, _config!)) {
           await Clipboard.setData(const ClipboardData(text: ''));
           final clipResult = await _matchWithUrl(clipText);
           if (clipResult != null) return clipResult;
@@ -534,7 +515,7 @@ class Flinku {
     }
 
     final slug = _generateInstantSlug(options.title);
-    final shortUrl = 'https://${_config!.subdomain}.flku.dev/$slug';
+    final shortUrl = 'https://${_config!.instantLinkHost}/$slug';
     _createLinkInstantInBackground(options, slug);
 
     return FlinkuCreatedLink(
