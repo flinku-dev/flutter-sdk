@@ -21,6 +21,8 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null);
     Flinku.debugResetForTest();
   });
 
@@ -265,6 +267,101 @@ void main() {
       expect(bodies, isNotEmpty);
       expect(bodies.first.containsKey('referrer'), isFalse);
       expect(bodies.first['userAgent'], startsWith('flutter/'));
+    });
+
+    test('referrer match succeeds with customDomain configured', () async {
+      Flinku.debugIsAndroid = () => true;
+      final bodies = <Map<String, dynamic>>[];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        return 'flinku_click=click_custom&utm_source=play';
+      });
+
+      Flinku.debugHttpPost = ({
+        required uri,
+        required headers,
+        required body,
+        required timeout,
+      }) async {
+        bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        return matchedReferrerResponse();
+      };
+
+      Flinku.configure(
+        baseUrl: 'https://myapp.flku.dev',
+        customDomain: 'go.example.com',
+      );
+      final link = await Flinku.match();
+
+      expect(bodies, hasLength(1));
+      expect(bodies.first['referrer'], 'flinku_click=click_custom&utm_source=play');
+      expect(bodies.first['subdomain'], 'myapp');
+      expect(bodies.first.containsKey('clipboardUrl'), isFalse);
+      expect(bodies.first.containsKey('customDomain'), isFalse);
+      expect(link, isNotNull);
+      expect(link!.matchType, 'referrer');
+    });
+
+    test(
+        'clipboard customDomain match when referrer also present but lacks flinku_click',
+        () async {
+      Flinku.debugIsAndroid = () => true;
+      final bodies = <Map<String, dynamic>>[];
+      const clipUrl = 'https://go.example.com/promo';
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+        return 'utm_source=google-play&utm_medium=organic';
+      });
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+        if (call.method == 'Clipboard.getData') {
+          return <String, dynamic>{'text': clipUrl};
+        }
+        if (call.method == 'Clipboard.setData') {
+          return null;
+        }
+        return null;
+      });
+
+      Flinku.debugHttpPost = ({
+        required uri,
+        required headers,
+        required body,
+        required timeout,
+      }) async {
+        final map = jsonDecode(body) as Map<String, dynamic>;
+        bodies.add(map);
+        if (map.containsKey('clipboardUrl')) {
+          return http.Response(
+            jsonEncode(<String, dynamic>{
+              'matched': true,
+              'matchType': 'clipboard',
+              'deepLink': 'myapp://from-clipboard',
+              'slug': 'promo',
+              'subdomain': 'myapp',
+              'params': <String, dynamic>{},
+              'projectId': 'proj_clip',
+            }),
+            200,
+          );
+        }
+        return unmatchedResponse();
+      };
+
+      Flinku.configure(
+        baseUrl: 'https://myapp.flku.dev',
+        customDomain: 'go.example.com',
+      );
+      final link = await Flinku.match();
+
+      expect(link, isNotNull);
+      expect(link!.matchType, 'clipboard');
+      expect(link.deepLink, 'myapp://from-clipboard');
+      expect(bodies.any((b) => b['clipboardUrl'] == clipUrl), isTrue);
+      expect(bodies.any((b) => b.containsKey('referrer')), isFalse);
     });
   });
 }

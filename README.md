@@ -26,6 +26,7 @@ void main() async {
   Flinku.configure(
     baseUrl: 'https://yourapp.flku.dev',
     apiKey: 'flk_pk_...', // publishable key; required for referrals / createLink
+    // customDomain: 'links.example.com', // optional: verified custom link domain (host only)
   );
   runApp(const MyApp());
 }
