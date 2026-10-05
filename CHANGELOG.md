@@ -1,3 +1,16 @@
+## 0.8.0-beta.2
+
+* **Deferred matching on dual stack networks:** on the first launches after
+  install, `match()` now asks the server over IPv6 and then over IPv4 instead of
+  one default connection. Before, a click recorded by the browser over IPv6 could
+  not be matched when Dart connected over IPv4, because the server matches on the
+  public IP. IPv4 is only asked when IPv6 did not match.
+* Limited to the first five launches within 24 hours of the first attempt. Later
+  launches make the single request as before.
+* No API change. `resetAll()` also clears the attempt bookkeeping.
+* `tool/family_probe.dart` prints the public IP flku.dev sees for the default,
+  IPv6 and IPv4 connections.
+
 ## 0.8.0-beta.1
 
 * Prerelease of 0.8.0 for early testing. Does not satisfy `^0.7.0` — opt in with

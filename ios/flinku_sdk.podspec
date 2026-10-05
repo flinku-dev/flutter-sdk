@@ -3,7 +3,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flinku_sdk'
-  s.version          = '0.8.0-beta.1'
+  s.version          = '0.8.0-beta.2'
   s.summary          = 'Flinku Flutter SDK — deferred deep linking'
   s.description      = <<-DESC
 Flinku Flutter plugin. iOS stub returns null for Play Install Referrer (Android-only).
