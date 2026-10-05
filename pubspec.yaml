@@ -1,6 +1,6 @@
 name: flinku_sdk
 description: Official Flutter SDK for Flinku — deferred deep linking for iOS and Android. A practical alternative and replacement for Firebase Dynamic Links after the shutdown.
-version: 0.7.3
+version: 0.7.4
 homepage: https://flinku.dev
 repository: https://github.com/flinku-dev/flutter-sdk
 issue_tracker: https://github.com/flinku-dev/flutter-sdk/issues

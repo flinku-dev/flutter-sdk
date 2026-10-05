@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'flinku_config.dart';
@@ -191,12 +192,53 @@ class Flinku {
   static const String _matchedKey = 'flinku_matched';
   static const String _matchResultKey = 'flinku_match_result';
   static const String _userIdKey = 'flinku_user_id';
+  /// Epoch ms of the first [match] attempt on this install. Bounds the per
+  /// address family attempts to the period when a deferred link can exist.
+  static const String _firstMatchAttemptKey = 'flinku_first_match_attempt_ms';
+  static const String _familyAttemptCountKey = 'flinku_family_attempt_count';
+  static const Duration _familyAttemptWindow = Duration(hours: 24);
+  static const int _familyAttemptMaxLaunches = 5;
   /// Survives [reset]. Used by [qualifyReferral] after the pending record is cleared.
   static const String _referralProjectIdKey = 'flinku_referral_project_id';
   static const String _pendingReferralKeyPrefix = 'flinku_pending_referral_';
   static const String _pendingReferralIndexKey = 'flinku_pending_referral_index';
   static const String _referralTrackedKeyPrefix = 'referral_tracked_';
   static const Duration _pendingReferralTtl = Duration(days: 30);
+
+  /// When set, used instead of [http.post] for the fingerprint match request,
+  /// so match flows can be tested offline.
+  @visibleForTesting
+  static Future<http.Response> Function({
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  })? debugHttpPost;
+
+  /// When set, replaces the real per address family request made by the
+  /// fingerprint step. Return `null` to simulate a family that is unreachable.
+  @visibleForTesting
+  static Future<http.Response?> Function({
+    required InternetAddressType family,
+    required Uri uri,
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  })? debugFamilyHttpPost;
+
+  /// Resets static SDK state and test doubles. For unit tests only.
+  @visibleForTesting
+  static void debugResetForTest() {
+    _config = null;
+    _apiKey = null;
+    _apiBaseUrl = null;
+    _hasMatched = false;
+    _secretKeyWarningShown = false;
+    _referralApiKeyWarningShown = false;
+    _prefs = null;
+    debugHttpPost = null;
+    debugFamilyHttpPost = null;
+  }
 
   static String _referralTrackedKey(String projectId, String userId) =>
       '$_referralTrackedKeyPrefix${projectId}_$userId';
@@ -337,10 +379,132 @@ class Flinku {
   }
 
   static Future<FlinkuLink?> _matchFingerprint() async {
-    return _postMatch(<String, dynamic>{
+    final body = <String, dynamic>{
       'subdomain': _config!.subdomain,
       'userAgent': 'flutter/${Platform.operatingSystem}',
-    });
+    };
+
+    // The server matches a click to this install by public IP. On a dual stack
+    // network the browser that recorded the click and this app can pick
+    // different IP families (browser on IPv6, Dart on IPv4), and then the two
+    // addresses never match. So on the first launches, ask over each family in
+    // turn. IPv6 goes first because it is the more specific key, and IPv4 is
+    // only asked when IPv6 did not match.
+    if (await _familyAttemptsAllowed()) {
+      var reached = false;
+      for (final family in const [
+        InternetAddressType.IPv6,
+        InternetAddressType.IPv4,
+      ]) {
+        final response = await _postMatchOverFamily(family, body);
+        if (response == null) continue;
+        reached = true;
+        final link = await _linkFromMatchResponse(response);
+        if (link != null) return link;
+      }
+      // At least one family answered "no match": the default request would
+      // only repeat one of them.
+      if (reached) return null;
+    }
+
+    return _postMatch(body);
+  }
+
+  /// Whether this launch should try the fingerprint match over each IP family.
+  ///
+  /// Limited to the first launches within 24 hours of the first attempt, which
+  /// is the period in which a deferred link can still be waiting on the server.
+  static Future<bool> _familyAttemptsAllowed() async {
+    // Unit tests that only install [debugHttpPost] keep the single request path.
+    if (debugHttpPost != null && debugFamilyHttpPost == null) return false;
+    try {
+      final prefs = _prefs ??= await SharedPreferences.getInstance();
+      final now = DateTime.now().millisecondsSinceEpoch;
+      var first = prefs.getInt(_firstMatchAttemptKey);
+      if (first == null) {
+        first = now;
+        await prefs.setInt(_firstMatchAttemptKey, now);
+      }
+      if (now - first > _familyAttemptWindow.inMilliseconds) return false;
+      final count = prefs.getInt(_familyAttemptCountKey) ?? 0;
+      if (count >= _familyAttemptMaxLaunches) return false;
+      await prefs.setInt(_familyAttemptCountKey, count + 1);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// POSTs the match body over one IP family only.
+  ///
+  /// Returns `null` when the API host has no address of that family, or the
+  /// network cannot reach it (for example IPv6 on an IPv4 only network).
+  static Future<http.Response?> _postMatchOverFamily(
+    InternetAddressType family,
+    Map<String, dynamic> body,
+  ) async {
+    final uri = Uri.parse('$_apiBaseUrl/api/match');
+    const headers = {'Content-Type': 'application/json'};
+    final encoded = jsonEncode(body);
+    final timeout = _config!.timeout;
+
+    final hook = debugFamilyHttpPost;
+    if (hook != null) {
+      try {
+        return await hook(
+          family: family,
+          uri: uri,
+          headers: headers,
+          body: encoded,
+          timeout: timeout,
+        );
+      } catch (_) {
+        return null;
+      }
+    }
+
+    HttpClient? inner;
+    try {
+      final addresses =
+          await InternetAddress.lookup(uri.host, type: family).timeout(timeout);
+      InternetAddress? address;
+      for (final a in addresses) {
+        if (a.type == family) {
+          address = a;
+          break;
+        }
+      }
+      if (address == null) return null;
+      final target = address;
+
+      // A family the network cannot route should fail fast, not stall launch.
+      const connectCap = Duration(seconds: 3);
+      inner = HttpClient()
+        ..connectionTimeout = timeout < connectCap ? timeout : connectCap
+        ..findProxy = (_) => 'DIRECT';
+      // Connect to the chosen address, then run TLS for the real host name so
+      // SNI and certificate checks behave exactly like a normal request.
+      inner.connectionFactory =
+          (Uri url, String? proxyHost, int? proxyPort) async {
+        final port = url.hasPort ? url.port : 443;
+        final task = await Socket.startConnect(target, port);
+        final Future<Socket> secured = task.socket.then<Socket>(
+          (raw) => SecureSocket.secure(raw, host: url.host),
+        );
+        return ConnectionTask.fromSocket(secured, task.cancel);
+      };
+
+      final response = await IOClient(inner)
+          .post(uri, headers: headers, body: encoded)
+          .timeout(timeout);
+      _log('match over ${family.name}: HTTP ${response.statusCode}');
+      return response;
+    } catch (e) {
+      _log('match over ${family.name} unavailable: $e');
+      return null;
+    } finally {
+      inner?.close(force: true);
+    }
   }
 
   static Future<FlinkuLink?> _matchWithUrl(String url) async {
@@ -353,14 +517,36 @@ class Flinku {
   static Future<FlinkuLink?> _postMatch(Map<String, dynamic> body) async {
     try {
       final uri = Uri.parse('$_apiBaseUrl/api/match');
-      final response = await http
-          .post(
-            uri,
-            headers: const {'Content-Type': 'application/json'},
-            body: jsonEncode(body),
-          )
-          .timeout(_config!.timeout);
+      const headers = {'Content-Type': 'application/json'};
+      final encoded = jsonEncode(body);
+      final timeout = _config!.timeout;
+      final response = debugHttpPost != null
+          ? await debugHttpPost!(
+              uri: uri,
+              headers: headers,
+              body: encoded,
+              timeout: timeout,
+            )
+          : await http
+              .post(
+                uri,
+                headers: headers,
+                body: encoded,
+              )
+              .timeout(timeout);
 
+      return await _linkFromMatchResponse(response);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Turns a `/api/match` response into a stored [FlinkuLink], or `null` when
+  /// the response is not a successful match.
+  static Future<FlinkuLink?> _linkFromMatchResponse(
+    http.Response response,
+  ) async {
+    try {
       if (response.statusCode != 200) {
         return null;
       }
@@ -519,6 +705,8 @@ class Flinku {
     await prefs.remove(_userIdKey);
     await prefs.remove(_referralProjectIdKey);
     await prefs.remove(_matchResultKey);
+    await prefs.remove(_firstMatchAttemptKey);
+    await prefs.remove(_familyAttemptCountKey);
 
     for (final projectId in _getPendingReferralIndex(prefs)) {
       await prefs.remove(_pendingReferralKey(projectId));

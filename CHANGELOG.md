@@ -1,3 +1,16 @@
+## 0.7.4 - 2026-10-05
+
+* **Deferred matching on dual stack networks:** on the first launches after
+  install, `match()` now asks the server over IPv6 and then over IPv4 instead of
+  one default connection. Before, a click recorded by the browser over IPv6 could
+  not be matched when Dart connected over IPv4, because the server matches on the
+  public IP. IPv4 is only asked when IPv6 did not match.
+* Limited to the first five launches within 24 hours of the first attempt. Later
+  launches make the single request as before.
+* No API change. `resetAll()` also clears the attempt bookkeeping.
+* `tool/family_probe.dart` prints the public IP flku.dev sees for the default,
+  IPv6 and IPv4 connections.
+
 ## 0.7.3 - 2026-09-22
 
 * Optional `customDomain` on `Flinku.configure` for active custom link domains; `createLinkInstant` and clipboard matching use it when set.
