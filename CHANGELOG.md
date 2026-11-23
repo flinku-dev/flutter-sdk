@@ -1,3 +1,9 @@
+## Unreleased
+
+* Optional `readClipboard` on `Flinku.configure` (default `true`). When `false`,
+  `match()` never calls `Clipboard.getData` or `Clipboard.setData`. Same option
+  shipped on stable as `0.7.5`.
+
 ## 0.8.0-beta.2
 
 * **Deferred matching on dual stack networks:** on the first launches after
@@ -25,6 +31,24 @@
 * iOS: Install Referrer is a silent no-op (channel always returns null).
 * Public API of `Flinku.configure` / `Flinku.match` is unchanged.
 
+
+## 0.7.5 - 2026-11-23
+
+* Optional `readClipboard` on `Flinku.configure` (default `true`). When `false`,
+  `match()` never calls `Clipboard.getData` or `Clipboard.setData`.
+
+## 0.7.4 - 2026-10-05
+
+* **Deferred matching on dual stack networks:** on the first launches after
+  install, `match()` now asks the server over IPv6 and then over IPv4 instead of
+  one default connection. Before, a click recorded by the browser over IPv6 could
+  not be matched when Dart connected over IPv4, because the server matches on the
+  public IP. IPv4 is only asked when IPv6 did not match.
+* Limited to the first five launches within 24 hours of the first attempt. Later
+  launches make the single request as before.
+* No API change. `resetAll()` also clears the attempt bookkeeping.
+* `tool/family_probe.dart` prints the public IP flku.dev sees for the default,
+  IPv6 and IPv4 connections.
 
 ## 0.7.3 - 2026-09-22
 

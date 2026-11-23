@@ -266,12 +266,17 @@ class Flinku {
   /// Accepts publishable keys (`flk_pk_`) or secret keys (`flk_live_`).
   /// Use your publishable key (`flk_pk_`) in apps. Never embed your secret key (`flk_live_`).
   /// [customDomain] is your active custom link host (e.g. `go.example.com`), if any.
+  /// [readClipboard] controls whether [match] may read and clear the system
+  /// clipboard after fingerprint matching misses. Defaults to `true`. Set
+  /// `false` to skip clipboard access entirely (for example to avoid paste
+  /// permission prompts when Universal Links already handle attribution).
   /// [debug] enables console logging from the SDK.
   /// [timeout] applies to HTTP requests such as [match] and link creation.
   static void configure({
     required String baseUrl,
     String? customDomain,
     String? apiKey,
+    bool readClipboard = true,
     bool debug = false,
     Duration timeout = const Duration(seconds: 5),
   }) {
@@ -279,6 +284,7 @@ class Flinku {
     _config = FlinkuConfig(
       baseUrl: parsed.baseUrl,
       customDomain: normalizeCustomDomain(customDomain),
+      readClipboard: readClipboard,
       debug: debug,
       timeout: timeout,
     );
@@ -327,8 +333,11 @@ class Flinku {
   /// if there is no match, a non-200 response, or a network/parse error.
   ///
   /// On Android, tries Play Install Referrer first (deterministic when the install
-  /// came through the Play Store with a Flinku click id). Then fingerprint matching,
-  /// then the system clipboard for a Flinku short link (`.flku.dev` or your [baseUrl]).
+  /// came through the Play Store with a Flinku click id). Then fingerprint matching.
+  /// When that misses and [FlinkuConfig.readClipboard] is `true` (the default),
+  /// reads the system clipboard for a Flinku short link (`.flku.dev`, your
+  /// [baseUrl] host, or [FlinkuConfig.customDomain]) and retries via clipboard
+  /// matching.
   ///
   /// After a successful match, the JSON payload is stored locally; later calls
   /// return the same [FlinkuLink] without calling the network again until
@@ -378,17 +387,19 @@ class Flinku {
         return fingerprintResult;
       }
 
-      // 3. Clipboard-based deferred deep linking
-      try {
-        final clipData = await Clipboard.getData(Clipboard.kTextPlain);
-        final clipText = clipData?.text ?? '';
-        if (clipText.isNotEmpty &&
-            flinkuClipboardUrlAccepted(clipText, _config!)) {
-          await Clipboard.setData(const ClipboardData(text: ''));
-          final clipResult = await _matchWithUrl(clipText);
-          if (clipResult != null) return clipResult;
-        }
-      } catch (_) {}
+      // 3. Clipboard-based deferred deep linking (skipped when readClipboard is false)
+      if (_config!.readClipboard) {
+        try {
+          final clipData = await Clipboard.getData(Clipboard.kTextPlain);
+          final clipText = clipData?.text ?? '';
+          if (clipText.isNotEmpty &&
+              flinkuClipboardUrlAccepted(clipText, _config!)) {
+            await Clipboard.setData(const ClipboardData(text: ''));
+            final clipResult = await _matchWithUrl(clipText);
+            if (clipResult != null) return clipResult;
+          }
+        } catch (_) {}
+      }
 
       return null;
     } catch (_) {

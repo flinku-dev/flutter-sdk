@@ -27,14 +27,20 @@ void main() async {
     baseUrl: 'https://yourapp.flku.dev',
     apiKey: 'flk_pk_...', // publishable key; required for referrals / createLink
     // customDomain: 'links.example.com', // optional: verified custom link domain (host only)
+    // readClipboard: false, // optional: skip clipboard matching (default true)
   );
   runApp(const MyApp());
 }
 ```
 
+After Play Install Referrer (Android) and fingerprint matching miss, if
+`readClipboard` is `true` (default), `match()` may read and clear the system
+clipboard for a Flinku short link. Set `readClipboard: false` to never touch
+the clipboard.
+
 ## Handle deep links
 
-Call `Flinku.match()` once when the app starts — on the splash screen or in `initState`:
+Call `Flinku.match()` once when the app starts - on the splash screen or in `initState`:
 
 ```dart
 @override
@@ -57,7 +63,8 @@ Future<void> _checkDeepLink() async {
 
 1. **Android Play Install Referrer** — when the install came from Google Play with a Flinku `flinku_click=` parameter (deterministic)
 2. **Fingerprint** — probabilistic device/IP match
-3. **Clipboard** — if a Flinku short link was copied before install
+3. **Clipboard** - if a Flinku short link was copied before install and
+   `readClipboard` is `true` (default)
 
 On iOS, Install Referrer is skipped (no-op); matching uses fingerprint then clipboard.
 
