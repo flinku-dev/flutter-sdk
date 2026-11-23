@@ -8,7 +8,7 @@ Firebase Dynamic Links shut down in August 2025. If you are migrating off `fireb
 
 ```yaml
 dependencies:
-  flinku_sdk: ^0.7.3
+  flinku_sdk: ^0.7.5
 ```
 
 ## Setup
@@ -21,14 +21,21 @@ import 'package:flinku_sdk/flinku_sdk.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  Flinku.configure(baseUrl: 'https://yourapp.flku.dev');
+  Flinku.configure(
+    baseUrl: 'https://yourapp.flku.dev',
+    // readClipboard: false, // optional: skip clipboard matching (default true)
+  );
   runApp(const MyApp());
 }
 ```
 
+`match()` tries fingerprint matching first. If that misses and `readClipboard` is
+`true` (default), it may read and clear the system clipboard for a Flinku short
+link. Set `readClipboard: false` to never touch the clipboard.
+
 ## Handle deep links
 
-Call `Flinku.match()` once when the app starts — on the splash screen or in `initState`:
+Call `Flinku.match()` once when the app starts - on the splash screen or in `initState`:
 
 ```dart
 @override

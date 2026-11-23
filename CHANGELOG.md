@@ -1,3 +1,8 @@
+## 0.7.5 - 2026-11-23
+
+* Optional `readClipboard` on `Flinku.configure` (default `true`). When `false`,
+  `match()` never calls `Clipboard.getData` or `Clipboard.setData`.
+
 ## 0.7.4 - 2026-10-05
 
 * **Deferred matching on dual stack networks:** on the first launches after

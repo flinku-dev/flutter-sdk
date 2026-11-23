@@ -80,6 +80,10 @@ class FlinkuConfig {
   /// Active custom link domain host (no scheme), when set in [Flinku.configure].
   final String? customDomain;
 
+  /// When `true`, [Flinku.match] may read and clear the system clipboard after
+  /// fingerprint matching misses. Defaults to `true`.
+  final bool readClipboard;
+
   /// When `true`, the SDK prints debug messages to the console.
   final bool debug;
 
@@ -90,6 +94,7 @@ class FlinkuConfig {
   const FlinkuConfig({
     required this.baseUrl,
     this.customDomain,
+    this.readClipboard = true,
     this.debug = false,
     this.timeout = const Duration(seconds: 5),
   });
